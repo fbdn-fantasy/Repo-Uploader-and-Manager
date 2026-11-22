@@ -1,0 +1,25 @@
+{
+  "name": "repo-uploader-and-manager",
+  "version": "3.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "build": "npm run check && vite build",
+    "test:ui": "npm run build && node tests/ui/smoke.mjs",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.12.4",
+    "svelte": "5.57.3"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "6.2.4",
+    "@tauri-apps/cli": "2.12.4",
+    "svelte-check": "4.7.8",
+    "typescript": "5.9.3",
+    "vite": "7.3.8"
+  }
+}

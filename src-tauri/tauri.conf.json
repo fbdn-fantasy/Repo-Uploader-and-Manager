@@ -1,0 +1,90 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Repo Uploader and Manager",
+  "version": "3.0.0",
+  "identifier": "io.github.repo-uploader-and-manager.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "create": false,
+        "title": "Repo Uploader and Manager",
+        "width": 1120,
+        "height": 780,
+        "minWidth": 700,
+        "minHeight": 520
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'; object-src 'none'; frame-src 'none'; base-uri 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "publisher": "Repo Uploader and Manager",
+    "category": "DeveloperTool",
+    "shortDescription": "Manage GitHub repositories with system Git",
+    "homepage": "https://github.com/apps/repo-uploader-and-manager",
+    "license": "Apache-2.0",
+    "licenseFile": "../LICENSE",
+    "resources": {
+      "../LICENSE": "LICENSE",
+      "../THIRD-PARTY.txt": "THIRD-PARTY.txt"
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/256x256.png",
+      "icons/icon.ico"
+    ],
+    "linux": {
+      "deb": {
+        "section": "devel",
+        "depends": [
+          "git (>= 1:2.31)",
+          "libsecret-tools",
+          "xdg-utils",
+          "libc6 (>= 2.39)",
+          "libcairo2 (>= 1.10.0)",
+          "libdbus-1-3 (>= 1.10)",
+          "libgcc-s1 (>= 4.2)",
+          "libgdk-pixbuf-2.0-0 (>= 2.36.9)",
+          "libglib2.0-0t64 (>= 2.66.0)",
+          "libgtk-3-0t64 (>= 3.21.5)",
+          "libjavascriptcoregtk-4.1-0",
+          "libsoup-3.0-0 (>= 3.0.3)",
+          "libwayland-client0 (>= 1.11.0)",
+          "libwebkit2gtk-4.1-0 (>= 2.41.90)"
+        ]
+      },
+      "rpm": {
+        "depends": [
+          "git",
+          "libsecret",
+          "xdg-utils",
+          "gtk3",
+          "webkit2gtk4.1",
+          "libc.so.6(GLIBC_2.39)(64bit)"
+        ]
+      }
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "compression": "lzma",
+        "installerIcon": "icons/icon.ico"
+      }
+    },
+    "longDescription": "Manage local Git working trees and GitHub repositories with selective staging, commit history and manual synchronization."
+  }
+}
