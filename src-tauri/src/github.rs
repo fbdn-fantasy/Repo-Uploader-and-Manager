@@ -608,6 +608,28 @@ impl Github {
         self.details(account, &token, full, allowed)
     }
 
+    /// Background synchronization checks only the already-saved destination.
+    /// Auth uses its associated account even when a different account is active.
+    pub fn sync_repository_id(
+        &self,
+        account: u64,
+        token: &str,
+        full: &str,
+        expected: Option<u64>,
+    ) -> Result<u64> {
+        let (_, name) = split_name(full)?;
+        let remote: Remote =
+            decode(self.request(Some(account), token, "GET", &format!("/repos/{full}"), None)?)?;
+        if remote.id == 0
+            || !remote.full_name.eq_ignore_ascii_case(full)
+            || !remote.name.eq_ignore_ascii_case(name)
+            || expected.is_some_and(|id| id != remote.id)
+        {
+            return Err("The GitHub repository at this name has changed. Verify the repository association before synchronizing.".into());
+        }
+        Ok(remote.id)
+    }
+
     fn details(&self, account: u64, token: &str, full: &str, allowed: Remote) -> Result<Remote> {
         let mut current: Remote =
             decode(self.request(Some(account), token, "GET", &format!("/repos/{full}"), None)?)?;

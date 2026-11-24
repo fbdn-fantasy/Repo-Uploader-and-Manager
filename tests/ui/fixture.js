@@ -13,6 +13,7 @@ const app = {
   activeAccount: null,
   repos: [repo],
   theme: 'system',
+  autoSyncEnabled: true,
   gitVersion: 'git version 2',
   version: '1.0.0',
 }
@@ -28,6 +29,15 @@ const status = {
 }
 const calls = []
 const tests = []
+let syncMessage = 'Local branch is up to date.'
+let nextCallback = 1
+const callbacks = new Map()
+const listeners = new Map()
+function emit(event, payload) {
+  for (const [id, subscribed] of listeners) {
+    if (subscribed === event) callbacks.get(id)?.({ event, id, payload })
+  }
+}
 let authorize = false
 const info = {
   fullName: 'sample-owner/sample',
@@ -37,16 +47,33 @@ const info = {
 }
 window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} }
 window.__TAURI_INTERNALS__ = {
-  transformCallback() {
-    return 1
+  transformCallback(handler) {
+    const id = nextCallback++
+    callbacks.set(id, handler)
+    return id
   },
-  unregisterCallback() {},
-  async invoke(cmd, { action, args }) {
-    if (cmd.startsWith('plugin:event|')) return 1
+  unregisterCallback(id) { callbacks.delete(id) },
+  async invoke(cmd, request) {
+    if (cmd === 'plugin:event|listen') {
+      listeners.set(request.handler, request.event)
+      return request.handler
+    }
+    if (cmd === 'plugin:event|unlisten') {
+      listeners.delete(request.eventId)
+      callbacks.delete(request.eventId)
+      return
+    }
+    const { action, args } = request
     calls.push({ action, args })
     switch (action) {
       case 'state':
         return structuredClone(app)
+      case 'autoSyncStatus':
+        return app.repos.filter((r) => r.fullName && r.accountId === app.activeAccount)
+          .map((r) => ({ id: r.id, status: r.firstPush ? 'skipped' : 'current',
+            message: r.firstPush ? 'Waiting for first push.' : syncMessage, checkedAt: 1_800_000_000 }))
+      case 'checkForUpdates':
+        return "You're up to date (V1.0.0)."
       case 'authStart':
         return { session: '1', userCode: 'DEMO-CODE' }
       case 'authPoll':
@@ -107,6 +134,9 @@ window.__TAURI_INTERNALS__ = {
           { name: 'main', current: true },
           { name: 'feature', current: false },
         ]
+      case 'setAutoSyncEnabled':
+        app.autoSyncEnabled = args.enabled
+        break
       case 'theme':
         app.theme = args.theme
         break
@@ -115,6 +145,10 @@ window.__TAURI_INTERNALS__ = {
         break
       case 'remoteList':
         return [info]
+      case 'repoDelete':
+        if (args.mode !== 'local') throw Error('Unexpected deletion target')
+        app.repos = app.repos.filter((item) => item.id !== args.id)
+        break
       case 'repoUpdate':
         Object.assign(info, args)
         break
@@ -167,7 +201,12 @@ const last = (action) => calls.findLast((c) => c.action === action)?.args
 
 async function run() {
   await heading('Sign in with GitHub')
-  check(document.querySelector('.brand img').naturalWidth > 0, 'App icon did not load')
+  await wait(() => document.querySelector('.brand img').naturalWidth > 0, 'loaded application icon')
+  check(count('checkForUpdates') === 0, 'Application updates must be checked manually')
+  await click('Check For Updates')
+  await wait(() => document.querySelector('.notice-banner')?.textContent.includes("up to date"), 'updater status')
+  check(count('checkForUpdates') === 1, 'Expected exactly one app update check')
+  tests.push('Manual app update check while signed out')
   await click('Sign in with GitHub')
   await heading('Authorize this device')
   check(
@@ -219,7 +258,8 @@ async function run() {
   await click('Create and connect')
   check(last('repoConnect').mode === 'create' && last('repoConnect').target === 'sample', 'Wrong private creation target')
   check(count('sync') === 0, 'Private repository creation uploaded commits')
-  tests.push('Unlinked checkout, explicit private creation, connection permission recovery')
+  await wait(() => document.querySelector('.sync-summary')?.textContent.includes('Waiting for first push.'), 'unpublished repository sync status')
+  tests.push('Repository automatic sync status, private creation, connection permission recovery')
   await click('Push')
   await heading('Confirm first push')
   check(
@@ -229,6 +269,10 @@ async function run() {
   input(document.querySelector('dialog select'), 'public')
   await click('Push and make public')
   check(last('sync').publish.private === false, 'Visibility choice missing')
+  syncMessage = 'Local branch updated from GitHub.'
+  emit('auto-sync', null)
+  await wait(() => document.querySelector('.sync-summary')?.textContent.includes(syncMessage), 'background sync completion')
+  tests.push('Background sync status refreshes in the open repository')
   await click('Push')
   check(!last('sync').publish, 'Later push reopened publishing')
   await click('Fetch')
@@ -317,12 +361,43 @@ async function run() {
   await click('Push')
   check(last('sync').id === 'r2' && last('sync').operation === 'push', 'Connected checkout push failed')
   tests.push('Retained checkout after GitHub error, existing private destination, manual push')
+  await click('Repositories', document.querySelector('.sidebar'))
+  const localDelete = await wait(() =>
+    document.querySelector('button[aria-label="Delete local copy of sample-owner/private-project"]'), 'local delete action')
+  localDelete.click()
+  await heading('Delete local copy')
+  let dialog = document.querySelector('dialog')
+  check(text(dialog).includes('/projects/retained') && text(dialog).includes('will stay on GitHub'), 'Missing local deletion target or remote explanation')
+  input(dialog.querySelector('input'), 'retained')
+  check(buttons('Delete local copy', dialog)[0].disabled, 'Wrong name enabled local deletion')
+  await click('Cancel', dialog)
+  check(!count('repoDelete'), 'Cancellation deleted a checkout')
+  localDelete.click()
+  await heading('Delete local copy')
+  dialog = document.querySelector('dialog')
+  input(dialog.querySelector('input'), 'sample-owner/private-project')
+  await click('Delete local copy', dialog)
+  check(last('repoDelete').mode === 'local' && last('repoDelete').id === 'r2', 'Unexpected deletion target')
+  check(document.querySelectorAll('.repo-item').length === 1 && text(document.querySelector('.repo-item')).includes('sample'), 'Wrong repository removed from list')
+  tests.push('Local copy deletion from repository list, target path, typed confirmation and cancellation')
   await click('Clone repository', document.querySelector('.sidebar'))
   await heading('GitHub repositories')
   await wait(() => document.querySelector('.remote-row'), 'clone repository choice')
   await click('Settings', document.querySelector('.sidebar'))
   input(document.querySelector('select'), 'dark')
   await wait(() => document.documentElement.dataset.theme === 'dark', 'dark theme')
+  const toggle = () => document.querySelector('button[role="switch"]')
+  check(toggle()?.getAttribute('aria-checked') === 'true', 'Automatic sync default should be on')
+  toggle().click()
+  await wait(() => toggle()?.getAttribute('aria-checked') === 'false', 'automatic sync disabled')
+  check(last('setAutoSyncEnabled').enabled === false, 'Switch must persist the disabled preference')
+  await click('Repositories', document.querySelector('.sidebar'))
+  check(!document.querySelector('.sync-result'), 'Disabled automatic sync status was displayed')
+  await click('Settings', document.querySelector('.sidebar'))
+  check(toggle()?.getAttribute('aria-checked') === 'false', 'Preference was lost on navigation')
+  toggle().click()
+  await wait(() => toggle()?.getAttribute('aria-checked') === 'true', 'automatic sync enabled')
+  tests.push('Settings turns automatic repository sync off and on')
   await click('Manage accounts')
   await heading('Account selection')
   await click('Switch')

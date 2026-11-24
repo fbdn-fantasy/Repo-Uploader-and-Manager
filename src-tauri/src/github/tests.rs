@@ -438,3 +438,23 @@ fn optional_permissions_are_resolved_against_matching_repository_id() {
         .contains("Repository creation"));
     server.join().unwrap();
 }
+
+#[test]
+fn background_lookup_pins_only_exact_matching_names_for_legacy_checkouts() {
+    let (api, server) = service(vec![
+        reply("GET", "/repos/fixture/sample", remote("different", true)),
+        reply("GET", "/repos/fixture/sample", remote("sample", true)),
+    ]);
+    assert!(api
+        .sync_repository_id(1, "fixture", "../outside", None)
+        .is_err());
+    assert!(api
+        .sync_repository_id(1, "fixture", "fixture/sample", None)
+        .is_err());
+    assert_eq!(
+        api.sync_repository_id(1, "fixture", "fixture/sample", None)
+            .unwrap(),
+        100
+    );
+    assert_eq!(server.join().unwrap().len(), 2);
+}

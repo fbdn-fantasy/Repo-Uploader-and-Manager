@@ -10,6 +10,7 @@ Built with **Tauri 2, Rust, Svelte, and TypeScript**, the application uses syste
 - **Multiple Accounts:** Connect and manage repositories across different GitHub accounts.
 - **Create Repositories:** Create new GitHub repositories directly from the application, with optional README, license, and Git ignore templates.
 - **Manage Existing Repositories:** Open existing local repositories or clone repositories from GitHub.
+- **Automatic Repository Sync:** On startup and every 30 minutes, the app checks only repositories in your Repositories list that have an existing local checkout. It fetches changes from their GitHub origins and fast-forwards clean local branches. Repositories with local edits or diverging commits stay available for manual review. You can turn automatic syncing off in Settings.
 - **File Management:** Add, modify, and remove repository files using your file manager.
 - **Git Operations:** Stage individual files, create commits, push changes, pull updates, and fetch remote changes.
 - **Branch Management:** Work with Git branches and manage branch deletion.
@@ -59,6 +60,6 @@ Source code ZIP archives are available alongside the installation packages for u
 
 ## License
 
-Repo Uploader and Manager is open-source software licensed under the **Apache License 2.0**.
+Repo Uploader and Manager is open-source software licensed under the **GNU Affero General Public License v3.0 only**.
 
 See [LICENSE](LICENSE) for the full license terms. Third-party attributions are available in [THIRD-PARTY.txt](THIRD-PARTY.txt).

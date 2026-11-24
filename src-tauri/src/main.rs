@@ -1,8 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod autosync;
 mod git;
 mod github;
 mod storage;
+mod updater;
 mod window;
 mod workspace;
 
@@ -17,12 +19,16 @@ use tauri::{Emitter, Manager};
 
 struct Session {
     db: Database,
+    auto: autosync::State,
     watcher: Option<git::Watcher>,
     review: Option<(String, String, bool)>,
 }
 
 struct Service {
     github: Github,
+    updater: Mutex<updater::Updater>,
+    auto_wake: std::sync::mpsc::Sender<autosync::Wake>,
+    install_gate: Mutex<()>,
     // Serialize repository mutations and account switches across IPC workers.
     session: Mutex<Result<Session>>,
 }
@@ -173,7 +179,7 @@ fn local_action(
 }
 
 impl Service {
-    fn with_session(&self, run: impl FnOnce(&mut Session) -> Result<Value>) -> Result<Value> {
+    fn with_session<T>(&self, run: impl FnOnce(&mut Session) -> Result<T>) -> Result<T> {
         let mut guard = self
             .session
             .lock()
@@ -184,6 +190,15 @@ impl Service {
 
     fn handle(&self, app: &tauri::AppHandle, action: &str, args: Value) -> Result<Value> {
         match action {
+            "checkForUpdates" => {
+                let mut updater = self.updater.try_lock()
+                    .map_err(|_| "An update is already in progress.")?;
+                // An installer may restart this process. Let any Git transfer finish first.
+                let _transfer = self.install_gate.lock().map_err(|_| "Restart the app and retry the update.")?;
+                let _session = self.session.lock()
+                    .map_err(|_| "Restart the application before installing an update.")?;
+                return Ok(json!(updater.check(app)?));
+            }
             "authStart" => {
                 let expected = args
                     .get("accountId")
@@ -217,6 +232,7 @@ impl Service {
                         })?;
                         Ok(Value::Null)
                     })?;
+                    let _ = self.auto_wake.send(autosync::Wake::Account(account.id.to_string()));
                     return Ok(json!({"done":true}));
                 }
                 return Ok(json!({"done":false}));
@@ -245,13 +261,25 @@ impl Service {
         action: &str,
         args: Value,
     ) -> Result<Value> {
+        if session.auto.busy.as_deref().is_some_and(|id| args["id"].as_str() == Some(id))
+            && !matches!(action, "repoStatus" | "repoWatch" | "openFolder" | "history" | "branches" | "scan") {
+            return Err("This repository is synchronizing. Retry when the check finishes.".into());
+        }
         let db = &mut session.db;
         match action {
+            "autoSyncStatus" => return Ok(json!(session.auto.visible(&db.data))),
+            "setAutoSyncEnabled" => {
+                let enabled = args["enabled"].as_bool().ok_or("Choose whether to synchronize automatically.")?;
+                if session.auto.set_enabled(db, enabled)? {
+                    if enabled { let _ = self.auto_wake.send(autosync::Wake::All); }
+                    let _ = app.emit("auto-sync", ());
+                }
+            }
             "state" => {
                 return Ok(
                     json!({"accounts":db.data.accounts,"activeAccount":db.data.active_account,
                     "repos": db.data.repos.iter().filter(|r|Some(&r.account_id)==db.data.active_account.as_ref()).collect::<Vec<_>>(),
-                    "theme":db.data.theme,"gitVersion":git::version().ok(),"version":env!("CARGO_PKG_VERSION")}),
+                    "theme":db.data.theme,"autoSyncEnabled":db.data.auto_sync_enabled,"gitVersion":git::version().ok(),"version":env!("CARGO_PKG_VERSION")}),
                 )
             }
             "theme" => {
@@ -381,6 +409,8 @@ async fn dispatch(
 }
 
 fn main() {
+    #[cfg(target_os = "linux")]
+    gtk::glib::set_prgname(Some("repo-uploader-and-manager"));
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             if let Some(window) = app.get_webview_window("main") {
@@ -393,14 +423,21 @@ fn main() {
             let dir: PathBuf = app.path().app_config_dir()?;
             let session = Database::load(&dir).map(|db| Session {
                 db,
+                auto: autosync::State::default(),
                 watcher: None,
                 review: None,
             });
-            app.manage(Arc::new(Service {
+            let (wake, requests) = std::sync::mpsc::channel();
+            let service = Arc::new(Service {
                 github: Github::new(),
+                updater: Mutex::default(),
+                auto_wake: wake,
+                install_gate: Mutex::new(()),
                 session: Mutex::new(session),
-            }));
+            });
+            app.manage(Arc::clone(&service));
             window::open(app, &dir)?;
+            autosync::start(service, app.handle().clone(), requests)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![dispatch])

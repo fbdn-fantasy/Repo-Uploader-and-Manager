@@ -10,6 +10,7 @@
     type Notice,
   } from './api'
   import Modal from './Modal.svelte'
+  import DeleteRepositoryDialog from './DeleteRepositoryDialog.svelte'
   import Icon from './Icon.svelte'
   let {
     repo,
@@ -33,7 +34,6 @@
     visibilityConfirm = $state(false)
   let deletion = $state<DeleteMode>('remove'),
     confirmDelete = $state(false),
-    confirmation = $state(''),
     dialogError = $state('')
   let newAccount = $state(''),
     associationConfirm = $state(false)
@@ -71,7 +71,7 @@
   let exact = $derived(repo.fullName || repo.name)
   const modes: [DeleteMode, string][] = [
     ['remove', 'Remove from this app'],
-    ['local', 'Delete local folder'],
+    ['local', 'Delete local copy'],
     ['remote', 'Delete GitHub repository'],
     ['both', 'Delete local and GitHub copies'],
   ]
@@ -112,30 +112,6 @@
     } catch (e) {
       if (visibilityConfirm) dialogError = errorText(e)
       else error = errorText(e)
-    } finally {
-      busy = false
-    }
-  }
-  async function remove() {
-    if (busy || confirmation !== exact) return
-    busy = true
-    dialogError = ''
-    try {
-      await api('repoDelete', { id: repo.id, mode: deletion, confirmation })
-      confirmDelete = false
-      await changed()
-      if (deletion === 'remote') {
-        info = null
-        error = ''
-      }
-      notify(
-        deletion === 'remove'
-          ? 'Repository removed from this app.'
-          : 'Selected deletion completed.',
-      )
-    } catch (e) {
-      dialogError = errorText(e)
-      await changed()
     } finally {
       busy = false
     }
@@ -247,8 +223,6 @@
         class="danger-outline"
         disabled={busy}
         onclick={() => {
-          confirmation = ''
-          dialogError = ''
           confirmDelete = true
         }}>Review {deletion === 'remove' ? 'removal' : 'deletion'}</button
       >
@@ -279,38 +253,14 @@
   </Modal>
 {/if}
 {#if confirmDelete}
-  <Modal
-    title={modes.find(([v]) => v === deletion)![1]}
-    close={() => {
-      if (!busy) confirmDelete = false
-    }}
-  >
-    {#if deletion === 'remove'}<p>
-        This removes the repository from the app list. Both copies are kept.
-      </p>{/if}
-    {#if deletion === 'local' || deletion === 'both'}<p>
-        The entire local folder will be deleted, including untracked files and unpushed commits.
-      </p>
-      <p class="target-path">{repo.path}</p>{/if}
-    {#if deletion === 'remote' || deletion === 'both'}<p>
-        The GitHub repository <b>{repo.fullName}</b> and its history will be deleted.
-      </p>{/if}
-    <label
-      >Type <b class="break">{exact}</b> to confirm<input
-        bind:value={confirmation}
-        spellcheck="false"
-        autocomplete="off"
-      /></label
-    >
-    {#if dialogError}<p class="inline-error" role="alert">{dialogError}</p>{/if}
-    <div class="dialog-actions">
-      <button disabled={busy} onclick={() => (confirmDelete = false)}>Cancel</button><button
-        class="danger"
-        disabled={busy || confirmation !== exact}
-        onclick={remove}>{deletion === 'remove' ? 'Remove repository' : 'Confirm deletion'}</button
-      >
-    </div>
-  </Modal>
+  <DeleteRepositoryDialog
+    {repo}
+    mode={deletion}
+    title={modes.find(([value]) => value === deletion)![1]}
+    close={() => (confirmDelete = false)}
+    {changed}
+    {notify}
+  />
 {/if}
 
 {#if associationConfirm}

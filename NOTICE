@@ -1,0 +1,49 @@
+Repo Uploader and Manager
+
+Copyright (C) 2026 Forbidden_Fantasy
+
+This program is free software: you can redistribute it and/or
+modify it under the terms of the GNU Affero General Public
+License as published by the Free Software Foundation,
+version 3 only.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty
+of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+See the GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General
+Public License along with this program. If not, see
+https://www.gnu.org/licenses/.
+
+
+MODIFICATION AND REDISTRIBUTION
+
+When modifying or redistributing this software, the applicable
+requirements of the AGPL-3.0 must be followed, including:
+
+- Preserving applicable copyright and licensing notices.
+- Including a complete copy of the license.
+- Prominently identifying modifications and their relevant dates
+  when distributing modified versions.
+- Making the corresponding source code available as required
+  by the license.
+- Licensing covered derivative works under the AGPL-3.0.
+- Offering corresponding source code to users interacting
+  remotely with modified versions over a network, as required
+  by Section 13 of the license.
+
+Commercial use, modification and redistribution are permitted
+under the terms of the license.
+
+This notice does not impose additional restrictions or modify
+the terms of the GNU Affero General Public License.
+
+
+LICENSE IDENTIFICATION
+
+Copyright Holder: Forbidden_Fantasy
+License: GNU Affero General Public License v3.0 only
+SPDX-License-Identifier: AGPL-3.0-only
+License URL: https://www.gnu.org/licenses/agpl-3.0.html

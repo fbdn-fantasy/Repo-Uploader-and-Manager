@@ -9,7 +9,7 @@ use std::process::{Command, Output, Stdio};
 mod network;
 mod review;
 mod watcher;
-pub use network::{clone_repo, transfer};
+pub use network::{auto_ready, clone_repo, prepare_auto_pull, transfer, PullResult};
 pub use review::{commit, inspect_commit};
 pub use watcher::{watch, Watcher};
 

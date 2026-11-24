@@ -1,20 +1,25 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { listen } from '@tauri-apps/api/event'
+  import SyncStatus from './SyncStatus.svelte'
   import {
     api,
     errorText,
     suggestsGitHubAccess,
     type AppState,
+    type AutoSyncItem,
     type Repo,
     type Page,
     type Account,
     type Theme,
   } from './api'
   import Icon from './Icon.svelte'
+  import UpdateButton from './UpdateButton.svelte'
   import appIcon from '../src-tauri/icons/128x128.png'
   import Auth from './Auth.svelte'
   import Repository from './Repository.svelte'
   import RepoEntry from './RepoEntry.svelte'
+  import DeleteRepositoryDialog from './DeleteRepositoryDialog.svelte'
   import Modal from './Modal.svelte'
   let appState = $state<AppState | null>(null),
     page = $state<Page>('repositories'),
@@ -24,10 +29,12 @@
     busy = $state(false),
     notice = $state(''),
     isError = $state(false),
+    offerAccess = $state(false),
     menu = $state(false)
   let signing = $state(false),
     reauth = $state<Account | undefined>(undefined),
     signingOut = $state<Account | null>(null)
+  let localDelete = $state<Repo | null>(null)
   let active = $derived(appState?.accounts.find((a) => a.id === appState?.activeAccount))
   let repos = $derived((appState?.repos ?? []).filter((r) => r.accountId === active?.id))
   let repo = $derived(repos.find((r) => r.id === selected))
@@ -52,16 +59,33 @@
       (signing || !appState?.accounts.length || page !== 'accounts'),
   )
   let heading = $derived(inAuth ? 'GitHub account' : nav.find((n) => n[0] === page)?.[1] || '')
+  let syncById = $state<Record<string, AutoSyncItem>>({})
+  let syncRead = 0
+  async function refreshSyncStatus() {
+    const request = ++syncRead
+    const account = appState?.activeAccount
+    if (!account || !appState?.autoSyncEnabled) {
+      syncById = {}
+      return
+    }
+    const items = await api<AutoSyncItem[]>('autoSyncStatus')
+    if (request === syncRead && appState?.activeAccount === account) {
+      syncById = Object.fromEntries(items.map((item) => [item.id, item]))
+    }
+  }
   let timer: ReturnType<typeof setTimeout>
-  function notify(message: string, error = false) {
+  function notify(message: string, error = false, suggestAccess = true) {
     clearTimeout(timer)
     notice = message
     isError = error
+    offerAccess = error && suggestAccess && suggestsGitHubAccess(message)
     if (!error) timer = setTimeout(() => (notice = ''), 6000)
   }
   async function reload() {
     const data = await api<AppState>('state')
+    if (appState?.activeAccount !== data.activeAccount) syncById = {}
     appState = data
+    void refreshSyncStatus().catch((error) => notify(errorText(error), true, false))
     document.documentElement.dataset.theme = data.theme
     if (
       selected &&
@@ -82,7 +106,17 @@
   }
   onMount(() => {
     void init()
-    return () => clearTimeout(timer)
+    const subscription = listen('auto-sync', () => {
+      void refreshSyncStatus().catch((error) => notify(errorText(error), true, false))
+    }).then((stop) => {
+      // Read again after binding in case a check finished during startup.
+      void refreshSyncStatus().catch((error) => notify(errorText(error), true, false))
+      return stop
+    }).catch((error) => notify(errorText(error), true, false))
+    return () => {
+      clearTimeout(timer)
+      void subscription.then((stop) => stop?.())
+    }
   })
   function navigate(next: Page) {
     page = next
@@ -129,6 +163,18 @@
       busy = false
     }
   }
+  async function setAutoSync(enabled: boolean) {
+    if (busy) return
+    busy = true
+    try {
+      await api('setAutoSyncEnabled', { enabled })
+      await reload()
+    } catch (error) {
+      notify(errorText(error), true, false)
+    } finally {
+      busy = false
+    }
+  }
   async function changeTheme(value: string) {
     busy = true
     try {
@@ -167,6 +213,7 @@
         ></span
       ><Icon name="down" size={13} /></button
     >
+    <UpdateButton notify={(message, error) => notify(message, error, false)} closeMenu={() => (menu = false)} />
   </aside>
   {#if menu}<button class="scrim" aria-label="Close navigation" onclick={() => (menu = false)}
     ></button>{/if}
@@ -187,7 +234,7 @@
           class={isError ? 'error-banner' : 'notice-banner'}
         >
           <Icon name={isError ? 'info' : 'check'} size={17} /><span>{notice}</span>
-          {#if isError && suggestsGitHubAccess(notice)}
+          {#if offerAccess}
             <button onclick={() => api('openInstall').catch((e) => notify(errorText(e), true))}>
               Manage GitHub App access
             </button>
@@ -212,7 +259,7 @@
           <div class="section-symbol"><Icon name="settings" /></div>
           <div>
             <h1>Settings</h1>
-            <p>Appearance, Git installation, and application details.</p>
+            <p>Appearance, repository syncing, and application details.</p>
           </div>
         </header>
         <div class="settings-stack">
@@ -232,6 +279,20 @@
               ><option value="system">Follow system</option><option value="light">Light</option
               ><option value="dark">Dark</option></select
             >
+          </section>
+          <section class="panel setting-line">
+            <div>
+              <Icon name="refresh" />
+              <div>
+                <h2 id="auto-sync-label">Automatically sync repositories</h2>
+                <p id="auto-sync-description">Check added local repositories for GitHub changes on startup and every 30 minutes. Clean branches update automatically.</p>
+              </div>
+            </div>
+            <button class="auto-sync-switch" role="switch" aria-checked={appState.autoSyncEnabled}
+              aria-labelledby="auto-sync-label" aria-describedby="auto-sync-description" disabled={busy}
+              onclick={() => setAutoSync(!appState!.autoSyncEnabled)}>
+              <span class="switch-track" aria-hidden="true"></span>{appState.autoSyncEnabled ? 'On' : 'Off'}
+            </button>
           </section>
           <section class="panel setting-line">
             <div>
@@ -306,6 +367,7 @@
       {:else if repo}
         {#key repo.id + repo.path}<Repository
             {repo}
+            autoSync={appState.autoSyncEnabled ? syncById[repo.id] : undefined}
             accounts={appState.accounts}
             login={active?.login || ''}
             changed={reload}
@@ -340,16 +402,26 @@
           <div class="group-head">
             <h2>Local repositories <span class="count">{repos.length}</span></h2>
           </div>
-          {#each visible as r (r.id)}<button
-              class="repo-item"
-              onclick={() => {
-                selected = r.id
-                notice = ''
-              }}
-              ><span class="repo-symbol"><Icon name="repo" size={21} /></span><span
-                ><b>{r.name}</b><small>{r.path}</small></span
-              ><Icon name="next" size={17} /></button
-            >
+          {#each visible as r (r.id)}
+            <div class="repository-row">
+              <button
+                class="repo-item"
+                onclick={() => {
+                  selected = r.id
+                  notice = ''
+                }}
+                ><span class="repo-symbol"><Icon name="repo" size={21} /></span><span
+                  ><b>{r.name}</b><small>{r.path}</small>
+                    {#if appState.autoSyncEnabled && r.fullName && syncById[r.id]}<SyncStatus item={syncById[r.id]} />{/if}</span
+                ><Icon name="next" size={17} /></button
+              >
+              <button
+                class="danger-outline"
+                aria-label={`Delete local copy of ${r.fullName || r.name}`}
+                onclick={() => (localDelete = r)}
+                ><Icon name="trash" size={15} />Delete local copy</button
+              >
+            </div>
           {:else}{#if search}<p class="empty-inline">No matching repositories.</p>
             {:else}<div class="list-empty">
                 <span class="empty-icon"><Icon name="folder" size={27} /></span>
@@ -388,4 +460,14 @@
       >
     </div></Modal
   >
+{/if}
+{#if localDelete}
+  <DeleteRepositoryDialog
+    repo={localDelete}
+    mode="local"
+    title="Delete local copy"
+    close={() => (localDelete = null)}
+    changed={reload}
+    {notify}
+  />
 {/if}

@@ -317,6 +317,32 @@ fn rename_visibility_and_both_delete_check_exact_targets() {
 }
 
 #[test]
+fn local_delete_forgets_present_and_missing_checkouts_without_contacting_github() {
+    for already_missing in [false, true] {
+        let (temp, mut db) = database();
+        let (api, http) = service(create_script());
+        account(&api);
+        let mut repo = create(&mut db, &api, creation(temp.path())).unwrap().repo;
+        // The fixture server is closed after creation. Local deletion works offline.
+        assert_eq!(http.join().unwrap().len(), 1);
+        let sibling = temp.path().join("keep.txt");
+        fs::write(&sibling, "keep").unwrap();
+        fs::write(repo.path.join("untracked.txt"), "local content").unwrap();
+        assert!(delete(&mut db, &api, &mut repo, "local", "sample").is_err());
+        assert!(repo.path.join("untracked.txt").exists());
+        assert!(db.repo(&repo.id).is_ok());
+        if already_missing {
+            fs::remove_dir_all(&repo.path).unwrap();
+        }
+        delete(&mut db, &api, &mut repo, "local", "fixture/sample").unwrap();
+        assert!(!repo.path.exists());
+        assert_eq!(fs::read_to_string(sibling).unwrap(), "keep");
+        let reopened = Database::load(&temp.path().join("settings")).unwrap();
+        assert!(reopened.data.repos.is_empty());
+    }
+}
+
+#[test]
 fn removal_keeps_files_and_replaced_checkouts_are_never_deleted() {
     let (temp, mut db) = database();
     let (api, http) = service(vec![]);

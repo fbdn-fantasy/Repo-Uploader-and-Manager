@@ -29,15 +29,22 @@ pub struct Repo {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
+    #[serde(default = "sync_enabled_by_default")]
+    pub auto_sync_enabled: bool,
     pub accounts: Vec<AccountEntry>,
     pub active_account: Option<String>,
     pub repos: Vec<Repo>,
     pub theme: String,
 }
 
+fn sync_enabled_by_default() -> bool {
+    true
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            auto_sync_enabled: true,
             accounts: Vec::new(),
             active_account: None,
             repos: Vec::new(),

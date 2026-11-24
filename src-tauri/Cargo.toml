@@ -1,8 +1,8 @@
 [package]
 name = "repo-uploader-and-manager"
-version = "3.0.0"
+version = "1.0.0"
 edition = "2021"
-license = "Apache-2.0"
+license = "AGPL-3.0-only"
 description = "Desktop GitHub repository manager"
 authors = ["Repo Uploader and Manager"]
 
@@ -10,6 +10,7 @@ authors = ["Repo Uploader and Manager"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+hex = "0.4"
 tauri = { version = "2", features = [] }
 tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
@@ -18,6 +19,8 @@ tempfile = "3"
 base64 = "0.22"
 notify = "8"
 regex = "1"
+semver = "1"
+sha2 = "0.11"
 ureq = { version = "3.4", features = ["json"] }
 rfd = "0.17"
 uuid = { version = "1", features = ["v4"] }

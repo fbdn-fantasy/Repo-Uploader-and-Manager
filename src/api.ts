@@ -14,7 +14,14 @@ export interface Repo {
   fullName: string | null
   firstPush: boolean
 }
+export interface AutoSyncItem {
+  id: string
+  status: 'checking' | 'updated' | 'current' | 'skipped' | 'error'
+  message: string
+  checkedAt: number
+}
 export interface AppState {
+  autoSyncEnabled: boolean
   accounts: Account[]
   activeAccount: string | null
   repos: Repo[]
@@ -64,6 +71,15 @@ export type FormArgs = Record<string, unknown>
 export function api<T = void>(action: string, args: FormArgs = {}): Promise<T> {
   return invoke<T>('dispatch', { action, args })
 }
+
+// The backend owns one watcher. Finish detaching the old view before starting the next one.
+let lastWatch = Promise.resolve()
+export function watchRepository(id: string): Promise<void> {
+  const next = lastWatch.then(() => api('repoWatch', { id }))
+  lastWatch = next.catch(() => {})
+  return next
+}
+
 export function errorText(error: unknown) {
   return typeof error === 'string'
     ? error

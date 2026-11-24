@@ -3,8 +3,10 @@
   import { listen } from '@tauri-apps/api/event'
   import {
     api,
+    watchRepository,
     errorText,
     type Account,
+    type AutoSyncItem,
     type Notice,
     type Repo,
     type Status,
@@ -13,6 +15,7 @@
     type Info,
   } from './api'
   import Changes from './Changes.svelte'
+  import SyncStatus from './SyncStatus.svelte'
   import Branches from './Branches.svelte'
   import RepoSettings from './RepoSettings.svelte'
   import Icon from './Icon.svelte'
@@ -21,12 +24,14 @@
   let {
     repo,
     accounts,
+    autoSync,
     login,
     changed,
     notify,
   }: {
     repo: Repo
     accounts: Account[]
+    autoSync?: AutoSyncItem
     login: string
     changed: () => Promise<void>
     notify: Notice
@@ -117,17 +122,20 @@
       })
     void subscription
       .then(() => {
-        if (current) return api('repoWatch', { id })
+        if (current) return watchRepository(id)
       })
       .catch((e) => {
         if (current) watcherError = errorText(e)
       })
-    void refresh()
+      .then(() => {
+        // Read the baseline after installing the watcher, including edits made while opening.
+        if (current) return refresh()
+      })
     return () => {
       current = false
       clearTimeout(timer)
       stop?.()
-      void api('repoWatch', { id: '' }).catch(() => {})
+      void watchRepository('').catch(() => {})
     }
   })
   async function sync(operation: 'push' | 'pull' | 'fetch', confirmed = false) {
@@ -228,6 +236,7 @@
 {#if !repo.fullName}
   <p class="helper-note">Local repository. Select Push to connect it to GitHub.</p>
 {/if}
+{#if repo.fullName && autoSync}<div class="sync-summary" role="status"><SyncStatus item={autoSync} /></div>{/if}
 <nav class="tabs" aria-label="Repository sections">
   {#each tabs as [key, label, icon]}<button
       aria-current={tab === key ? 'page' : undefined}

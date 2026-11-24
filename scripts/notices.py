@@ -93,6 +93,10 @@ class Collection:
             "Some components are only used during the build or on one platform.",
             "Original upstream copyrights and contact details are reproduced here.",
             "The linked versioned package pages provide the unmodified upstream source.",
+            "The Windows installer includes Microsoft's Evergreen WebView2 bootstrapper.",
+            "Microsoft distributes the WebView2 Runtime under its own terms.",
+            "https://developer.microsoft.com/microsoft-edge/webview2/",
+            "https://learn.microsoft.com/microsoft-edge/webview2/concepts/distribution",
             "",
         ]
         for component, notices in sorted(self.entries.items()):

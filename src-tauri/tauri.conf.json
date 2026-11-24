@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Repo Uploader and Manager",
-  "version": "3.0.0",
+  "version": "1.0.0",
   "identifier": "io.github.repo-uploader-and-manager.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -18,12 +18,14 @@
         "width": 1120,
         "height": 780,
         "minWidth": 700,
-        "minHeight": 520
+        "minHeight": 520,
+        "maximized": true
       }
     ],
     "security": {
       "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'; object-src 'none'; frame-src 'none'; base-uri 'none'"
-    }
+    },
+    "enableGTKAppId": true
   },
   "bundle": {
     "active": true,
@@ -31,11 +33,12 @@
     "category": "DeveloperTool",
     "shortDescription": "Manage GitHub repositories with system Git",
     "homepage": "https://github.com/apps/repo-uploader-and-manager",
-    "license": "Apache-2.0",
+    "license": "AGPL-3.0-only",
     "licenseFile": "../LICENSE",
     "resources": {
       "../LICENSE": "LICENSE",
-      "../THIRD-PARTY.txt": "THIRD-PARTY.txt"
+      "../THIRD-PARTY.txt": "THIRD-PARTY.txt",
+      "../NOTICE": "NOTICE"
     },
     "icon": [
       "icons/32x32.png",
@@ -60,7 +63,9 @@
           "libjavascriptcoregtk-4.1-0",
           "libsoup-3.0-0 (>= 3.0.3)",
           "libwayland-client0 (>= 1.11.0)",
-          "libwebkit2gtk-4.1-0 (>= 2.41.90)"
+          "libwebkit2gtk-4.1-0 (>= 2.41.90)",
+          "pkexec",
+          "apt"
         ]
       },
       "rpm": {
@@ -70,7 +75,8 @@
           "xdg-utils",
           "gtk3",
           "webkit2gtk4.1",
-          "libc.so.6(GLIBC_2.39)(64bit)"
+          "libc.so.6(GLIBC_2.39)(64bit)",
+          "/usr/bin/pkexec"
         ]
       }
     },
@@ -83,8 +89,10 @@
         "installMode": "currentUser",
         "compression": "lzma",
         "installerIcon": "icons/icon.ico"
-      }
+      },
+      "allowDowngrades": true
     },
-    "longDescription": "Manage local Git working trees and GitHub repositories with selective staging, commit history and manual synchronization."
-  }
+    "longDescription": "Manage local Git working trees and GitHub repositories with selective staging, manual pushes and automatic fast-forward pulls."
+  },
+  "mainBinaryName": "Repo-Uploader-and-Manager-V1.0.0"
 }

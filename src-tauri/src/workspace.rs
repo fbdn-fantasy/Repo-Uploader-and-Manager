@@ -552,7 +552,13 @@ pub fn delete(
         "both" => (true, true),
         _ => return Err("Unknown deletion option.".into()),
     };
-    if local {
+    // A previously removed checkout (including after a failed settings save)
+    // only needs its list entry cleared. A dangling link or replacement still
+    // has a directory entry and must pass the normal identity checks.
+    let missing = mode == "local"
+        && fs::symlink_metadata(&repo.path)
+            .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound);
+    if local && remote {
         validate_local_delete(db, repo)?;
     }
     if remote {
@@ -571,7 +577,7 @@ pub fn delete(
             return Ok(());
         }
     }
-    if local {
+    if local && !missing {
         validate_local_delete(db, repo)
             .and_then(|_| {
                 fs::remove_dir_all(&repo.path).map_err(|_| {
