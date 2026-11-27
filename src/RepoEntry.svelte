@@ -4,17 +4,21 @@
   import Icon from './Icon.svelte'
   let {
     mode,
+    defaultGitFolder,
     opened,
     changed,
   }: {
     changed: () => Promise<void>
     mode: 'new' | 'open' | 'clone'
+    defaultGitFolder: string | null
     opened: (repo: Repo, warning?: string | null) => Promise<void>
   } = $props()
   let name = $state(''),
     description = $state(''),
-    parent = $state(''),
+    selectedFolder = $state(''),
     readme = $state(false)
+  let configuredFolder = $derived(mode === 'open' ? null : defaultGitFolder)
+  let parent = $derived(configuredFolder ?? selectedFolder)
   let license = $state(''),
     gitignore = $state(''),
     busy = $state(false),
@@ -70,7 +74,7 @@
     error = ''
     try {
       const path = await api<string | null>('pickFolder')
-      if (path) parent = path
+      if (path) selectedFolder = path
     } catch (e) {
       error = errorText(e)
     } finally {
@@ -187,17 +191,21 @@
     <h2>Local repository</h2>
   {/if}
   <label
-    >{mode === 'open' ? 'Repository folder' : 'Local parent folder'}<span class="path-field"
-      ><input
+    >{mode === 'open' ? 'Repository folder' : 'Local parent folder'}
+    {#if configuredFolder}
+      <input aria-label="Selected directory" aria-describedby="default-folder-note" value={parent} readonly />
+      <small id="default-folder-note" class="muted">Change the default Git folder in Settings.</small>
+    {:else}
+      <span class="path-field"><input
         aria-label="Selected directory"
-        bind:value={parent}
+        bind:value={selectedFolder}
         placeholder="Choose a folder"
         required
       /><button type="button" disabled={busy} onclick={browse}
         ><Icon name="folder" size={16} /> Browse</button
-      ></span
-    ></label
-  >
+      ></span>
+    {/if}
+  </label>
   {#if mode === 'new'}
     <div class="subsection">
       <h3>Initial files</h3>

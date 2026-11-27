@@ -21,6 +21,7 @@ export interface AutoSyncItem {
   checkedAt: number
 }
 export interface AppState {
+  defaultGitFolder: string | null
   autoSyncEnabled: boolean
   accounts: Account[]
   activeAccount: string | null

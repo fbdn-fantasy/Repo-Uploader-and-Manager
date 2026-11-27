@@ -15,7 +15,7 @@ const app = {
   theme: 'system',
   autoSyncEnabled: true,
   gitVersion: 'git version 2',
-  version: '1.0.0',
+  version: '1.0.1',
 }
 const status = {
   branch: 'main',
@@ -29,6 +29,7 @@ const status = {
 }
 const calls = []
 const tests = []
+let checkoutStale = true
 let syncMessage = 'Local branch is up to date.'
 let nextCallback = 1
 const callbacks = new Map()
@@ -39,6 +40,7 @@ function emit(event, payload) {
   }
 }
 let authorize = false
+let pickedFolder = '/projects/relocated-sample'
 const info = {
   fullName: 'sample-owner/sample',
   name: repo.name,
@@ -73,7 +75,7 @@ window.__TAURI_INTERNALS__ = {
           .map((r) => ({ id: r.id, status: r.firstPush ? 'skipped' : 'current',
             message: r.firstPush ? 'Waiting for first push.' : syncMessage, checkedAt: 1_800_000_000 }))
       case 'checkForUpdates':
-        return "You're up to date (V1.0.0)."
+        return "You're up to date (V1.0.1)."
       case 'authStart':
         return { session: '1', userCode: 'DEMO-CODE' }
       case 'authPoll':
@@ -83,6 +85,7 @@ window.__TAURI_INTERNALS__ = {
         }
         return { done: authorize }
       case 'repoStatus':
+        if (checkoutStale && args.id === repo.id) throw Error('The saved checkout is unavailable. Select Open repository folder to reconnect it.')
         return structuredClone(status)
       case 'repoCreate': {
         if (args.name === 'sample') return { repo, warning: null }
@@ -137,6 +140,11 @@ window.__TAURI_INTERNALS__ = {
       case 'setAutoSyncEnabled':
         app.autoSyncEnabled = args.enabled
         break
+      case 'setDefaultGitFolder':
+        app.defaultGitFolder = args.path
+        break
+      case 'repoClone':
+        return repo
       case 'theme':
         app.theme = args.theme
         break
@@ -153,9 +161,15 @@ window.__TAURI_INTERNALS__ = {
         Object.assign(info, args)
         break
       case 'pickFolder':
-        return '/projects/relocated-sample'
+        return pickedFolder
+      case 'repoFolderInspect': {
+        const initialize = args.path === '/projects/restored-files'
+        return { path: args.path, identity: 'selected-fixture', initialize, destination: initialize ? null : repo.fullName }
+      }
       case 'repoRelocate':
-        repo.path = args.path
+        repo.path = args.choice.path
+        repo.fullName = args.choice.destination
+        checkoutStale = false
         break
       case 'repoAssociate':
         repo.accountId = args.accountId
@@ -222,7 +236,30 @@ async function run() {
   await heading('Repositories')
   document.querySelector('.repo-item').click()
   await heading('Working tree')
-  const group = document.querySelector('.change-group')
+  await wait(() => document.querySelector('.error-banner')?.textContent.includes('reconnect'), 'saved checkout error')
+  await click('Open repository folder')
+  await heading('Repository folder')
+  await click('Reconnect folder')
+  await wait(() => document.querySelector('.change-group'), 'reconnected working tree')
+  check(last('repoRelocate').choice.path === '/projects/sample', 'Same-path repair used a different folder')
+  check(!document.querySelector('.inline-error') && !document.querySelector('.error-banner'), 'Stale errors remain after reconnecting')
+  await click('Open repository folder')
+  let folderDialog = document.querySelector('dialog')
+  input(folderDialog.querySelector('input'), '/projects/restored-files')
+  await click('Check folder', folderDialog)
+  check(text(folderDialog).includes('new local history'), 'Initialization must explain its effect')
+  const beforeInitialize = count('repoRelocate')
+  await click('Cancel', folderDialog)
+  check(count('repoRelocate') === beforeInitialize, 'Cancelling initialized a folder')
+  await click('Open repository folder')
+  folderDialog = document.querySelector('dialog')
+  input(folderDialog.querySelector('input'), '/projects/restored-files')
+  await click('Check folder', folderDialog)
+  await click('Initialize Git here', folderDialog)
+  await wait(() => document.querySelector('.path-text')?.textContent.includes('restored-files'), 'updated initialized path')
+  check(last('repoRelocate').choice.initialize, 'Missing explicit initialization confirmation')
+  tests.push('Stale checkout reconnects at the same path, folder initialization requires confirmation, and working tree refreshes')
+  const group = await wait(() => document.querySelector('.change-group'), 'working tree after initialization')
   group.querySelector('input[type=checkbox]').click()
   await click('Stage selected', group)
   check(last('stage').paths.join() === 'src/one.txt', 'Unexpected staged paths')
@@ -311,9 +348,12 @@ async function run() {
   await heading('Change associated account?')
   await click('Cancel', document.querySelector('dialog'))
   check(!count('repoAssociate'), 'Cancelled account reassociation was sent')
-  await click('Locate moved folder')
+  await click('Change repository folder')
+  await heading('Repository folder')
+  await click('Browse', document.querySelector('dialog'))
+  await click('Reconnect folder', document.querySelector('dialog'))
   check(
-    last('repoRelocate').path === '/projects/relocated-sample',
+    last('repoRelocate').choice.path === '/projects/relocated-sample',
     'Selected folder was not relinked',
   )
   await heading('Working tree')
@@ -398,6 +438,41 @@ async function run() {
   toggle().click()
   await wait(() => toggle()?.getAttribute('aria-checked') === 'true', 'automatic sync enabled')
   tests.push('Settings turns automatic repository sync off and on')
+  const preferenceInput = () => document.querySelector('input[aria-labelledby="default-folder-label"]')
+  pickedFolder = '/projects/browsed'
+  await click('Browse')
+  check(preferenceInput().value === pickedFolder, 'Directory picker did not fill the default')
+  await click('Save folder')
+  check(last('setDefaultGitFolder').path === pickedFolder, 'Picked default folder was not saved')
+  input(preferenceInput(), '/projects/default')
+  pickedFolder = null
+  await click('Browse')
+  check(preferenceInput().value === '/projects/default' && count('setDefaultGitFolder') === 1, 'Cancelling the picker changed the default')
+  await click('Save folder')
+  check(last('setDefaultGitFolder').path === '/projects/default', 'Typed path was not saved')
+  const pickedBeforeForms = count('pickFolder')
+  const directory = () => document.querySelector('input[aria-label="Selected directory"]')
+  await click('New repository', document.querySelector('.sidebar'))
+  await heading('Repository details')
+  check(directory().readOnly && directory().value === '/projects/default', 'Missing default creation folder')
+  input(document.querySelector('input[placeholder="my-project"]'), 'sample')
+  await click('Create private repository')
+  check(last('repoCreate').parent === '/projects/default', 'Incorrect creation parent')
+  await click('Clone repository', document.querySelector('.sidebar'))
+  const remoteChoice = await wait(() => document.querySelector('.remote-row input'), 'clone choice')
+  remoteChoice.click()
+  check(directory().readOnly && directory().value === '/projects/default', 'Missing default clone folder')
+  await click('Clone repository', document.querySelector('form'))
+  check(last('repoClone').parent === '/projects/default', 'Incorrect clone parent')
+  check(count('pickFolder') === pickedBeforeForms, 'Default folder opened an extra picker')
+  await click('Open repository', document.querySelector('.sidebar'))
+  check(!directory().readOnly && directory().value === '', 'Open repository inherited a parent folder')
+  await click('Settings', document.querySelector('.sidebar'))
+  await click('Clear default')
+  await click('Clone repository', document.querySelector('.sidebar'))
+  check(!directory().readOnly && directory().value === '', 'Clearing the default did not restore manual selection')
+  tests.push('Default Git folder applies to creation and cloning, supports cancellation and clearing')
+  await click('Settings', document.querySelector('.sidebar'))
   await click('Manage accounts')
   await heading('Account selection')
   await click('Switch')

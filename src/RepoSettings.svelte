@@ -17,12 +17,14 @@
     accounts,
     login,
     changed,
+    locate,
     notify,
   }: {
     repo: Repo
     accounts: Account[]
     login: string
     changed: () => Promise<void>
+    locate: () => void
     notify: Notice
   } = $props()
   let info = $state<Info | null>(null),
@@ -38,21 +40,6 @@
   let newAccount = $state(''),
     associationConfirm = $state(false)
   let otherAccounts = $derived(accounts.filter((a) => a.id !== repo.accountId))
-  async function locate() {
-    if (busy) return
-    busy = true
-    try {
-      const path = await api<string | null>('pickFolder')
-      if (!path) return
-      await api('repoRelocate', { id: repo.id, path })
-      await changed()
-      notify('Local repository location updated.')
-    } catch (e) {
-      notify(errorText(e), true)
-    } finally {
-      busy = false
-    }
-  }
   async function associate() {
     if (busy || !otherAccounts.some((a) => a.id === newAccount)) return
     busy = true
@@ -128,7 +115,7 @@
           {repo.path}
           <div>
             <button class="text-button" disabled={busy} onclick={locate}
-              ><Icon name="folder" size={14} />Locate moved folder</button
+              ><Icon name="folder" size={14} />Change repository folder</button
             >
           </div>
         </dd>

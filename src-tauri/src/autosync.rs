@@ -36,6 +36,10 @@ pub struct State {
 }
 
 impl State {
+    pub fn forget(&mut self, id: &str) {
+        self.items.remove(id);
+    }
+
     pub fn set_enabled(&mut self, db: &mut Database, enabled: bool) -> Result<bool> {
         if db.data.auto_sync_enabled == enabled {
             return Ok(false);

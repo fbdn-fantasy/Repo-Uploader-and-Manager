@@ -99,7 +99,12 @@ fn local_action(
     action: &str,
     args: &Value,
 ) -> Result<Value> {
-    workspace::verify_local(repo)?;
+    let verified = workspace::verify_local(repo)?;
+    if action == "repoWatch" && repo.identity != verified && session.auto.busy.as_deref() != Some(&repo.id) {
+        let mut upgraded = repo.clone();
+        upgraded.identity = verified;
+        session.db.put(&upgraded)?;
+    }
     let path = &repo.path;
     let account = session
         .db
@@ -279,8 +284,12 @@ impl Service {
                 return Ok(
                     json!({"accounts":db.data.accounts,"activeAccount":db.data.active_account,
                     "repos": db.data.repos.iter().filter(|r|Some(&r.account_id)==db.data.active_account.as_ref()).collect::<Vec<_>>(),
-                    "theme":db.data.theme,"autoSyncEnabled":db.data.auto_sync_enabled,"gitVersion":git::version().ok(),"version":env!("CARGO_PKG_VERSION")}),
+                    "theme":db.data.theme,"defaultGitFolder":db.data.default_git_folder,"autoSyncEnabled":db.data.auto_sync_enabled,"gitVersion":git::version().ok(),"version":env!("CARGO_PKG_VERSION")}),
                 )
+            }
+            "setDefaultGitFolder" => {
+                let path = args.get("path").ok_or("Choose a default Git folder or clear it.")?;
+                db.set_default_git_folder(decode(path.clone())?)?;
             }
             "theme" => {
                 let theme = field(&args, "theme")?;
@@ -348,8 +357,16 @@ impl Service {
                             field(&args, "target")?,
                         )?))
                     }
+                    "openFolder" if args.get("choice").is_some() => {
+                        let selected = workspace::checked_folder(db, &repo, &decode(args["choice"].clone())?)?;
+                        launch(selected.path.as_os_str())?;
+                    }
+                    "repoFolderInspect" => {
+                        return Ok(json!(workspace::inspect_folder(db, &repo, Path::new(field(&args, "path")?))?))
+                    }
                     "repoRelocate" => {
-                        workspace::relocate(db, &mut repo, Path::new(field(&args, "path")?))?;
+                        workspace::reconnect_folder(db, &repo, &decode(args["choice"].clone())?)?;
+                        session.auto.forget(&repo.id);
                         session.watcher = None;
                         session.review = None;
                     }

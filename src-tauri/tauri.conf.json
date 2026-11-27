@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Repo Uploader and Manager",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "identifier": "io.github.repo-uploader-and-manager.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -94,5 +94,5 @@
     },
     "longDescription": "Manage local Git working trees and GitHub repositories with selective staging, manual pushes and automatic fast-forward pulls."
   },
-  "mainBinaryName": "Repo-Uploader-and-Manager-V1.0.0"
+  "mainBinaryName": "Repo-Uploader-and-Manager-V1.0.1"
 }

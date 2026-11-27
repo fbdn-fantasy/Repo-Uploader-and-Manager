@@ -1,0 +1,14 @@
+node_modules/
+dist/
+target/
+src-tauri/gen/
+*.log
+.env
+.env.*
+AGENTS.md
+*.zip
+*.deb
+*.rpm
+*.tar.gz
+*.exe
+__pycache__/

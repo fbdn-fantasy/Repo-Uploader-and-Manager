@@ -47,3 +47,7 @@ Copyright Holder: Forbidden_Fantasy
 License: GNU Affero General Public License v3.0 only
 SPDX-License-Identifier: AGPL-3.0-only
 License URL: https://www.gnu.org/licenses/agpl-3.0.html
+
+
+Release V1.0.1 (2026-11-27) adds checkout reconnection, local Git initialization,
+and a configurable parent folder for repository creation and cloning.

@@ -31,6 +31,8 @@ pub struct Repo {
 pub struct Settings {
     #[serde(default = "sync_enabled_by_default")]
     pub auto_sync_enabled: bool,
+    #[serde(default)]
+    pub default_git_folder: Option<PathBuf>,
     pub accounts: Vec<AccountEntry>,
     pub active_account: Option<String>,
     pub repos: Vec<Repo>,
@@ -45,6 +47,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             auto_sync_enabled: true,
+            default_git_folder: None,
             accounts: Vec::new(),
             active_account: None,
             repos: Vec::new(),
@@ -87,6 +90,15 @@ impl Database {
         Ok(())
     }
 
+    pub fn set_default_git_folder(&mut self, folder: Option<PathBuf>) -> Result<()> {
+        if let Some(path) = &folder {
+            if !path.is_absolute() || !path.is_dir() {
+                return Err("Choose an existing directory for the default Git folder.".into());
+            }
+        }
+        self.change(|settings| settings.default_git_folder = folder)
+    }
+
     pub fn active(&self) -> Result<u64> {
         self.data
             .active_account
@@ -117,10 +129,34 @@ impl Database {
 }
 
 #[cfg(unix)]
-pub fn file_id(path: &Path) -> std::io::Result<String> {
+fn legacy_file_id(path: &Path) -> std::io::Result<String> {
     use std::os::unix::fs::MetadataExt;
     let m = fs::metadata(path)?;
     Ok(format!("{}-{}", m.dev(), m.ino()))
+}
+
+#[cfg(target_os = "linux")]
+pub fn file_id(path: &Path) -> std::io::Result<String> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = fs::metadata(path)?;
+    // Btrfs assigns different device numbers to a subvolume across mounts.
+    // Its statvfs filesystem ID incorporates the filesystem and subvolume.
+    let fsid = rustix::fs::statvfs(path)?.f_fsid;
+    if fsid == 0 {
+        return legacy_file_id(path);
+    }
+    let birth = meta
+        .created()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|t| t.as_nanos().to_string())
+        .unwrap_or_default();
+    Ok(format!("fs:{fsid:x}-{}-{birth}", meta.ino()))
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+pub fn file_id(path: &Path) -> std::io::Result<String> {
+    legacy_file_id(path)
 }
 
 #[cfg(windows)]
@@ -151,4 +187,21 @@ pub fn checkout_identity(path: &Path) -> Result<String> {
         file_id(path).map_err(error)?,
         file_id(&path.join(".git")).map_err(error)?
     ))
+}
+
+pub fn matches_checkout(saved: &str, path: &Path, current: &str) -> bool {
+    if saved == current {
+        return true;
+    }
+    // V1.0.0 saved just the device and inode pair on Unix. Accept an exact
+    // match while that mount exists, never an inode match across devices.
+    #[cfg(target_os = "linux")]
+    if !saved.contains("fs:") {
+        if let (Ok(root), Ok(git)) = (legacy_file_id(path), legacy_file_id(&path.join(".git"))) {
+            return saved == format!("{root}/{git}");
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = path;
+    false
 }

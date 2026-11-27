@@ -41,6 +41,65 @@ fn public() -> Metadata {
 }
 
 #[test]
+fn default_folder_persists_and_routes_creation_and_clone() {
+    let temp = tempfile::tempdir().unwrap();
+    let settings = temp.path().join("settings");
+    fs::create_dir(&settings).unwrap();
+    fs::write(
+        settings.join("workspace.json"),
+        r#"{"accounts":[],"activeAccount":"1","repos":[],"theme":"dark","autoSyncEnabled":false}"#,
+    )
+    .unwrap();
+    let mut db = Database::load(&settings).unwrap();
+    assert!(db.data.default_git_folder.is_none());
+    let folder = temp.path().join("git repositories");
+    fs::create_dir(&folder).unwrap();
+    db.set_default_git_folder(Some(folder.clone())).unwrap();
+    let mut reopened = Database::load(&settings).unwrap();
+    assert_eq!(reopened.data.default_git_folder.as_ref(), Some(&folder));
+
+    let mut script = create_script();
+    script.extend(get_script());
+    let (api, http) = service(script);
+    account(&api);
+    let repo = create(&mut reopened, &api, creation(temp.path()))
+        .unwrap()
+        .repo;
+    assert_eq!(repo.path, folder.canonicalize().unwrap().join("sample"));
+    // The clone must encounter the checkout in the configured parent before any Git transfer.
+    assert!(
+        clone_repo(&mut reopened, &api, "fixture/sample", temp.path())
+            .err()
+            .unwrap()
+            .contains("already exists")
+    );
+    assert!(!temp.path().join("sample").exists());
+    http.join().unwrap();
+
+    assert!(reopened
+        .set_default_git_folder(Some(repo.path.join("README.md")))
+        .is_err());
+    assert_eq!(reopened.data.default_git_folder.as_ref(), Some(&folder));
+    fs::rename(&folder, temp.path().join("moved")).unwrap();
+    assert!(create(&mut reopened, &api, creation(temp.path()))
+        .err()
+        .unwrap()
+        .contains("Settings"));
+    assert!(
+        clone_repo(&mut reopened, &api, "fixture/sample", temp.path())
+            .err()
+            .unwrap()
+            .contains("Settings")
+    );
+    reopened.set_default_git_folder(None).unwrap();
+    let reopened = Database::load(&settings).unwrap();
+    assert_eq!(
+        destination_parent(&reopened, temp.path()).unwrap(),
+        temp.path()
+    );
+}
+
+#[test]
 fn description_limit_counts_unicode_characters() {
     assert!(validate_description("").is_ok());
     assert!(validate_description(&"😀".repeat(350)).is_ok());
@@ -361,7 +420,7 @@ fn removal_keeps_files_and_replaced_checkouts_are_never_deleted() {
 }
 
 #[test]
-fn account_change_is_explicit_and_relocation_checks_checkout_identity() {
+fn account_change_is_explicit_and_relocation_rechecks_the_selected_checkout() {
     use crate::storage::AccountEntry;
     let (temp, mut db) = database();
     db.change(|d| {
@@ -380,8 +439,10 @@ fn account_change_is_explicit_and_relocation_checks_checkout_identity() {
     fs::rename(&old, &moved).unwrap();
     fs::create_dir(&old).unwrap();
     git::init(&old).unwrap();
-    assert!(relocate(&mut db, &mut repo, &old).is_err());
-    relocate(&mut db, &mut repo, &moved).unwrap();
+    assert!(verify_local(&repo).is_err());
+    let choice = inspect_folder(&db, &repo, &moved).unwrap();
+    reconnect_folder(&mut db, &repo, &choice).unwrap();
+    repo = db.repo(&repo.id).unwrap();
     assert_eq!(db.repo(&repo.id).unwrap().path, moved);
     assert!(reassociate(&mut db, &api, &mut repo, 3).is_err());
     reassociate(&mut db, &api, &mut repo, 2).unwrap();
@@ -389,4 +450,88 @@ fn account_change_is_explicit_and_relocation_checks_checkout_identity() {
     db.change(|d| d.active_account = Some("2".into())).unwrap();
     assert_eq!(db.repo(&repo.id).unwrap().account_id, "2");
     http.join().unwrap();
+}
+
+#[test]
+fn reconnect_replaced_checkout_verifies_origin_and_retains_the_pinned_remote() {
+    let (temp, mut db) = database();
+    let (api, http) = service(create_script());
+    account(&api);
+    let repo = create(&mut db, &api, creation(temp.path())).unwrap().repo;
+    http.join().unwrap();
+    fs::rename(&repo.path, temp.path().join("original")).unwrap();
+    fs::create_dir(&repo.path).unwrap();
+    git::init(&repo.path).unwrap();
+    git::set_origin(&repo.path, "other/project", None).unwrap();
+    assert!(inspect_folder(&db, &repo, &repo.path).is_err());
+    git::set_origin(&repo.path, "fixture/sample", Some("other/project")).unwrap();
+    assert!(verify_local(&repo).is_err());
+    let choice = inspect_folder(&db, &repo, &repo.path).unwrap();
+    assert!(!choice.initialize);
+    git::set_origin(&repo.path, "other/project", Some("fixture/sample")).unwrap();
+    assert!(reconnect_folder(&mut db, &repo, &choice).is_err());
+    assert_eq!(db.repo(&repo.id).unwrap().identity, repo.identity);
+    git::set_origin(&repo.path, "fixture/sample", Some("other/project")).unwrap();
+    reconnect_folder(&mut db, &repo, &choice).unwrap();
+    let saved = Database::load(&temp.path().join("settings"))
+        .unwrap()
+        .repo(&repo.id)
+        .unwrap();
+    assert_eq!(saved.remote_id, repo.remote_id);
+    assert_eq!(saved.first_push, repo.first_push);
+    assert_ne!(saved.identity, repo.identity);
+    verify_local(&saved).unwrap();
+}
+
+#[test]
+fn initialize_only_an_unmanaged_folder_after_confirmation() {
+    let (temp, mut db) = database();
+    let (api, http) = service(create_script());
+    account(&api);
+    let repo = create(&mut db, &api, creation(temp.path())).unwrap().repo;
+    http.join().unwrap();
+    let plain = temp.path().join("plain");
+    fs::create_dir(&plain).unwrap();
+    fs::write(plain.join("notes"), "keep me").unwrap();
+    assert!(inspect_folder(&db, &repo, &repo.path.join(".git")).is_err());
+    let nested = repo.path.join("nested");
+    fs::create_dir(&nested).unwrap();
+    assert!(inspect_folder(&db, &repo, &nested).is_err());
+    let choice = inspect_folder(&db, &repo, &plain).unwrap();
+    assert!(choice.initialize);
+    assert!(choice.destination.is_none() && !plain.join(".git").exists());
+    fs::write(plain.join(".git"), "broken checkout").unwrap();
+    assert!(reconnect_folder(&mut db, &repo, &choice).is_err());
+    assert_eq!(
+        fs::read_to_string(plain.join(".git")).unwrap(),
+        "broken checkout"
+    );
+    fs::remove_file(plain.join(".git")).unwrap();
+    let another = local_record(repo.path.clone(), 2).unwrap();
+    db.put(&another).unwrap();
+    assert!(inspect_folder(&db, &repo, &repo.path).is_err());
+    reconnect_folder(&mut db, &repo, &choice).unwrap();
+    let saved = db.repo(&repo.id).unwrap();
+    verify_local(&saved).unwrap();
+    assert_eq!(saved.path, plain.canonicalize().unwrap());
+    assert!(saved.full_name.is_none() && saved.remote_id.is_none() && !saved.first_push);
+    assert!(git::snapshot(&saved.path).unwrap().history.is_empty());
+    assert_eq!(fs::read_to_string(plain.join("notes")).unwrap(), "keep me");
+    assert!(repo.path.join(".git").exists());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn legacy_linux_checkout_accepts_only_exact_device_and_inode_pairs() {
+    use std::os::unix::fs::MetadataExt;
+    let (temp, _) = database();
+    git::init(temp.path()).unwrap();
+    let mut repo = local_record(temp.path().canonicalize().unwrap(), 1).unwrap();
+    let root = fs::metadata(&repo.path).unwrap();
+    let git = fs::metadata(repo.path.join(".git")).unwrap();
+    let current = repo.identity.clone();
+    repo.identity = format!("{}-{}/{}-{}", root.dev(), root.ino(), git.dev(), git.ino());
+    assert_eq!(verify_local(&repo).unwrap(), current);
+    repo.identity = format!("0-{}/0-{}", root.ino(), git.ino());
+    assert!(verify_local(&repo).is_err());
 }

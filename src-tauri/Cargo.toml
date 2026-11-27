@@ -1,6 +1,6 @@
 [package]
 name = "repo-uploader-and-manager"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 license = "AGPL-3.0-only"
 description = "Desktop GitHub repository manager"
@@ -38,6 +38,7 @@ debug = 0
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
+rustix = { version = "1", features = ["fs"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }

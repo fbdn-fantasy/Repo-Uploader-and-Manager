@@ -1,7 +1,7 @@
 use crate::{
     git,
     github::{Github, Remote},
-    storage::{checkout_identity, Database, Repo, Result},
+    storage::{checkout_identity, file_id, matches_checkout, Database, Repo, Result},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -94,6 +94,16 @@ fn ignore_text(key: &str) -> Result<Option<&'static str>> {
     })
 }
 
+fn destination_parent<'a>(db: &'a Database, selected: &'a Path) -> Result<&'a Path> {
+    match db.data.default_git_folder.as_deref() {
+        Some(folder) if !folder.is_dir() => {
+            Err("The default Git folder is unavailable. Change or clear it in Settings.".into())
+        }
+        Some(folder) => Ok(folder),
+        None => Ok(selected),
+    }
+}
+
 fn reserve(parent: &Path, name: &str) -> Result<PathBuf> {
     validate_name(name)?;
     let parent = parent
@@ -101,7 +111,7 @@ fn reserve(parent: &Path, name: &str) -> Result<PathBuf> {
         .map_err(|_| "Choose an existing parent directory.")?;
     let path = parent.join(name);
     fs::create_dir(&path).map_err(|e| match e.kind() {
-        std::io::ErrorKind::AlreadyExists => "The destination already exists. Choose another parent or repository name.",
+        std::io::ErrorKind::AlreadyExists => "The destination already exists. Choose another repository name or parent folder. You can change the default Git folder in Settings.",
         _ => "The repository folder could not be created. Check the parent directory and permissions.",
     })?;
     Ok(path)
@@ -240,7 +250,7 @@ pub fn create(db: &mut Database, api: &Github, request: Creation) -> Result<Crea
     validate_description(&request.description)?;
     license_text(&request.license)?;
     ignore_text(&request.gitignore)?;
-    let path = reserve(&request.parent, &request.name)?;
+    let path = reserve(destination_parent(db, &request.parent)?, &request.name)?;
     let local = || -> Result<Repo> {
         git::init(&path)?;
         initial_files(&path, &request)?;
@@ -268,6 +278,7 @@ pub fn create(db: &mut Database, api: &Github, request: Creation) -> Result<Crea
 
 pub fn clone_repo(db: &mut Database, api: &Github, full: &str, parent: &Path) -> Result<Repo> {
     let account = db.active()?;
+    let parent = destination_parent(db, parent)?;
     let remote = api.repository(account, full)?;
     let token = api.token(account)?;
     let path = reserve(parent, &remote.name)?;
@@ -308,21 +319,173 @@ pub fn open_repo(db: &mut Database, api: &Github, input: &Path) -> Result<Repo> 
     Ok(repo)
 }
 
-pub fn relocate(db: &mut Database, repo: &mut Repo, path: &Path) -> Result<()> {
-    let path = git::root(path)?;
-    if checkout_identity(&path)? != repo.identity {
-        return Err("Choose the original checkout at its new location. For a copy on another disk, open it as a separate repository.".into());
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderChoice {
+    pub path: PathBuf,
+    identity: String,
+    initialize: bool,
+    destination: Option<String>,
+}
+
+fn has_entry(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(_) => Err("The folder could not be inspected. Check its permissions.".into()),
     }
+}
+
+fn check_initialization(db: &Database, repo: &Repo, path: &Path) -> Result<()> {
+    if path.parent().is_none()
+        || ["HOME", "USERPROFILE"]
+            .iter()
+            .filter_map(std::env::var_os)
+            .filter_map(|p| PathBuf::from(p).canonicalize().ok())
+            .any(|home| home.starts_with(path))
+        || db
+            .data
+            .repos
+            .iter()
+            .any(|r| r.id != repo.id && (r.path.starts_with(path) || path.starts_with(&r.path)))
+    {
+        return Err(
+            "Choose a project folder separate from your home and other saved repositories.".into(),
+        );
+    }
+    for ancestor in path.ancestors() {
+        if ancestor
+            .file_name()
+            .is_some_and(|n| n.eq_ignore_ascii_case(".git"))
+            || has_entry(&ancestor.join(".git"))?
+            || (has_entry(&ancestor.join("HEAD"))? && has_entry(&ancestor.join("objects"))?)
+        {
+            return Err("This folder is inside another repository or its Git metadata. Select the working tree root.".into());
+        }
+    }
+    Ok(())
+}
+
+pub fn inspect_folder(db: &Database, repo: &Repo, selected: &Path) -> Result<FolderChoice> {
+    if !selected.is_absolute() {
+        return Err("Enter an absolute folder path or use Browse.".into());
+    }
+    let path = selected.canonicalize().ok().filter(|p| p.is_dir()).ok_or(
+        "This folder is missing or inaccessible. Browse to the repository's current folder.",
+    )?;
     if db
         .data
         .repos
         .iter()
-        .any(|other| other.id != repo.id && other.path == path)
+        .any(|r| r.id != repo.id && r.path == path)
     {
         return Err("This location already belongs to another saved repository.".into());
     }
-    repo.path = path;
-    db.put(repo)
+    if !has_entry(&path.join(".git"))? {
+        check_initialization(db, repo, &path)?;
+        let identity = file_id(&path).map_err(|_| "The selected folder could not be verified.")?;
+        return Ok(FolderChoice {
+            path,
+            identity,
+            initialize: true,
+            destination: None,
+        });
+    }
+
+    git::root(&path)?;
+    let identity = checkout_identity(&path)?;
+    if db
+        .data
+        .repos
+        .iter()
+        .any(|r| r.id != repo.id && matches_checkout(&r.identity, &path, &identity))
+    {
+        return Err("This checkout already belongs to another saved repository.".into());
+    }
+    let destination = if matches_checkout(&repo.identity, &path, &identity) {
+        repo.full_name.clone()
+    } else if let Some(expected) = &repo.full_name {
+        match git::connection_origin(&path)? {
+            Some(actual) if actual.eq_ignore_ascii_case(expected) => Some(expected.clone()),
+            Some(_) => return Err(format!("This folder points to a different GitHub repository. Select the checkout for {expected}.")),
+            None => None,
+        }
+    } else {
+        git::origin(&path)?
+    };
+    Ok(FolderChoice {
+        path,
+        identity,
+        initialize: false,
+        destination,
+    })
+}
+
+pub fn checked_folder(db: &Database, repo: &Repo, choice: &FolderChoice) -> Result<FolderChoice> {
+    // The folder or its remote can change while the dialog awaits confirmation.
+    let current = inspect_folder(db, repo, &choice.path)?;
+    if current != *choice {
+        return Err("The selected folder changed. Check it again before continuing.".into());
+    }
+    Ok(current)
+}
+
+pub fn reconnect_folder(db: &mut Database, repo: &Repo, choice: &FolderChoice) -> Result<()> {
+    let current = checked_folder(db, repo, choice)?;
+    if current.initialize {
+        // Initialize away from the user's files and publish the finished .git
+        // directory in one move. Failed initialization leaves the folder retryable.
+        let stage = tempfile::Builder::new()
+            .prefix(".repo-init-")
+            .tempdir_in(&current.path)
+            .map_err(|_| "Cannot create Git metadata. Check the folder's write permissions.")?;
+        git::init(stage.path())?;
+        let metadata = stage.path().join(".git");
+        let destination = current.path.join(".git");
+        #[cfg(target_os = "linux")]
+        let install = rustix::fs::renameat_with(
+            rustix::fs::CWD,
+            &metadata,
+            rustix::fs::CWD,
+            &destination,
+            rustix::fs::RenameFlags::NOREPLACE,
+        );
+        // Windows does not replace an existing directory with a directory move.
+        #[cfg(not(target_os = "linux"))]
+        let install = fs::rename(&metadata, &destination);
+        install.map_err(|_| {
+            "Cannot install Git metadata. Check the folder again and verify write permissions."
+        })?;
+        git::root(&current.path)?;
+    }
+    let mut updated = repo.clone();
+    updated.path = current.path;
+    updated.identity = if current.initialize {
+        let identity = checkout_identity(&updated.path)?;
+        if identity.split_once('/').map(|(root, _)| root) != Some(current.identity.as_str()) {
+            return Err("The folder changed during initialization. Check the folder again.".into());
+        }
+        identity
+    } else {
+        current.identity
+    };
+    if updated.full_name != current.destination {
+        updated.remote_id = None;
+        updated.previous_origin = None;
+        updated.first_push = false;
+        updated.full_name = current.destination;
+    }
+    if let Some(full) = &updated.full_name {
+        updated.name = full.rsplit('/').next().unwrap_or(&updated.name).to_owned();
+    } else {
+        updated.name = updated
+            .path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or("Select a named repository folder.")?
+            .to_owned();
+    }
+    db.put(&updated)
 }
 
 pub fn reassociate(db: &mut Database, api: &Github, repo: &mut Repo, account: u64) -> Result<()> {
@@ -343,11 +506,17 @@ pub fn reassociate(db: &mut Database, api: &Github, repo: &mut Repo, account: u6
     db.put(repo)
 }
 
-pub fn verify_local(repo: &Repo) -> Result<()> {
-    if git::root(&repo.path)? != repo.path || checkout_identity(&repo.path)? != repo.identity {
-        return Err("The saved checkout was moved or replaced. Remove its entry and open the correct repository.".into());
+pub fn verify_local(repo: &Repo) -> Result<String> {
+    let recovery =
+        "The saved checkout is unavailable. Select Open repository folder to reconnect it.";
+    if git::root(&repo.path).map_err(|_| recovery)? != repo.path {
+        return Err(recovery.into());
     }
-    Ok(())
+    let current = checkout_identity(&repo.path).map_err(|_| recovery)?;
+    if !matches_checkout(&repo.identity, &repo.path, &current) {
+        return Err(recovery.into());
+    }
+    Ok(current)
 }
 
 fn verified_remote(db: &mut Database, api: &Github, repo: &mut Repo) -> Result<Remote> {

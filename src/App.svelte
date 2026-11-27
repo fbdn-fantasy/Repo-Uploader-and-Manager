@@ -19,12 +19,14 @@
   import Auth from './Auth.svelte'
   import Repository from './Repository.svelte'
   import RepoEntry from './RepoEntry.svelte'
+  import DefaultGitFolder from './DefaultGitFolder.svelte'
   import DeleteRepositoryDialog from './DeleteRepositoryDialog.svelte'
   import Modal from './Modal.svelte'
   let appState = $state<AppState | null>(null),
     page = $state<Page>('repositories'),
     selected = $state(''),
     search = $state('')
+  let folderRevision = $state(0)
   let starting = $state(true),
     busy = $state(false),
     notice = $state(''),
@@ -259,7 +261,7 @@
           <div class="section-symbol"><Icon name="settings" /></div>
           <div>
             <h1>Settings</h1>
-            <p>Appearance, repository syncing, and application details.</p>
+            <p>Appearance, repository folders, syncing, and application details.</p>
           </div>
         </header>
         <div class="settings-stack">
@@ -280,6 +282,7 @@
               ><option value="dark">Dark</option></select
             >
           </section>
+          <DefaultGitFolder folder={appState.defaultGitFolder} changed={reload} />
           <section class="panel setting-line">
             <div>
               <Icon name="refresh" />
@@ -363,14 +366,15 @@
           </div>
         </section>
       {:else if page === 'new' || page === 'open' || page === 'clone'}
-        {#key page}<RepoEntry mode={page} {opened} changed={reload} />{/key}
+        {#key page}<RepoEntry mode={page} defaultGitFolder={appState.defaultGitFolder} {opened} changed={reload} />{/key}
       {:else if repo}
-        {#key repo.id + repo.path}<Repository
+        {#key JSON.stringify([repo.id, repo.path, folderRevision])}<Repository
             {repo}
             autoSync={appState.autoSyncEnabled ? syncById[repo.id] : undefined}
             accounts={appState.accounts}
             login={active?.login || ''}
             changed={reload}
+            folderChanged={async () => { await reload(); folderRevision++ }}
             {notify}
           />{/key}
       {:else}

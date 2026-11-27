@@ -18,6 +18,7 @@
   import SyncStatus from './SyncStatus.svelte'
   import Branches from './Branches.svelte'
   import RepoSettings from './RepoSettings.svelte'
+  import RepositoryFolder from './RepositoryFolder.svelte'
   import Icon from './Icon.svelte'
   import Modal from './Modal.svelte'
   import ConnectRepository from './ConnectRepository.svelte'
@@ -27,6 +28,7 @@
     autoSync,
     login,
     changed,
+    folderChanged,
     notify,
   }: {
     repo: Repo
@@ -34,6 +36,7 @@
     autoSync?: AutoSyncItem
     login: string
     changed: () => Promise<void>
+    folderChanged: () => Promise<void>
     notify: Notice
   } = $props()
   type Tab = 'changes' | 'history' | 'branches' | 'settings'
@@ -56,7 +59,7 @@
     description = $state(''),
     visibility = $state('private'),
     publishError = $state('')
-  let connecting = $state(false)
+  let connecting = $state(false), folderOpen = $state(false)
   let current = true,
     statusRun = 0,
     tabRun = 0
@@ -214,7 +217,7 @@
   </div>
   <button
     disabled={busy}
-    onclick={() => api('openFolder', { id: repo.id }).catch((e) => (error = errorText(e)))}
+    onclick={() => (folderOpen = true)}
     ><Icon name="folder" size={16} />Open repository folder</button
   >
 </header>
@@ -251,7 +254,7 @@
       onclick={() => (error = '')}><Icon name="close" size={14} /></button
     >
   </div>{/if}
-{#if watcherError}<p class="inline-error" role="alert">
+{#if watcherError && watcherError !== error}<p class="inline-error" role="alert">
     {watcherError} Use Refresh to check the working tree.
   </p>{/if}
 {#if tab === 'changes'}
@@ -291,7 +294,7 @@
       {refresh}
       {notify}
     />{/if}
-{:else}<RepoSettings {repo} {accounts} {login} {changed} {notify} />{/if}
+{:else}<RepoSettings {repo} {accounts} {login} {changed} {notify} locate={() => (folderOpen = true)} />{/if}
 {#if publishing}
   <Modal
     title="Confirm first push"
@@ -338,4 +341,11 @@
 {/if}
 {#if connecting}
   <ConnectRepository {repo} {login} {connected} close={() => (connecting = false)} />
+{/if}
+
+{#if folderOpen}
+  <RepositoryFolder {repo} close={() => (folderOpen = false)} saved={async (initialized) => {
+    await folderChanged()
+    notify(initialized ? 'Local Git repository initialized.' : 'Repository folder reconnected.')
+  }} />
 {/if}
